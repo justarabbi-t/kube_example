@@ -1,93 +1,183 @@
-package main
+package kubeexample
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
-	"sync"
 
+	kafka "github.com/confluentinc/confluent-kafka-go/kafka"
+
+	ciliumclientset "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/justarabbi-t/kube_example.git/services"
 	appsv1 "k8s.io/api/apps/v1"
 )
 
-type Topic int
-
-const (
-	appList Topic = iota
-	Topic2
-	Topic3
-)
-
-func (t Topic) String() string {
-	return [...]string{"appList"}[t]
+var AddDplBaseMessage = map[string]services.Message{
+	"add": {
+		Action:        services.Add,
+		ActionSubject: services.Deployment,
+		Topic:         services.AppList,
+	},
+	"del": {
+		Action:        services.Del,
+		ActionSubject: services.Deployment,
+		Topic:         services.AppList,
+	},
+	"upd": {
+		Action:        services.Upd,
+		ActionSubject: services.Deployment,
+		Topic:         services.AppList,
+	},
 }
 
-func handleAppChannels(add_chan, upd_chan, del_chan chan appsv1.Deployment, ctx context.Context, wg *sync.WaitGroup) error {
-	// consumerChan := make(chan map[string]string, 1)
-	producerChan := make(chan map[string]string, 1)
-	// kafkaConsumer := services.NewConsumerWithChan(consumerChan, "deploymentTracker", "")
-	kafkaProducer := services.NewProducerWithChan(producerChan, "deploymentTracker", appList.String(), ctx)
-	// go kafkaConsumer.Watch()
+func sendAppMessage(name string, labels map[string]string, c chan json.Marshaler, a services.Action) {
+	services.DeploymentMessage{
+		Message: AddDplBaseMessage[a.String()],
+		Name:    name,
+		Labels:  labels,
+	}.Send(c)
+}
 
-	go kafkaProducer.Watch(nil)
+func handleDepChannels(addChan, updChan, delChan chan *appsv1.Deployment, kafkaCfg kafka.ConfigMap, errChan chan error, ctx context.Context) {
+	kafkaProducer := services.NewProducerWithJsonChan(kafkaCfg, services.AppList, ctx)
+	if errChan == nil {
+		errChan := make(chan error, 3)
+		go kafkaProducer.Watch(errChan)
+	} else {
+		go kafkaProducer.Watch(errChan)
+	}
+
 CheckDeplLoop:
 	for {
 		select {
-		case dpl_add := <-add_chan:
+		case dplAdd := <-addChan:
 			func() {
-				// gAppList.mu.Lock()
-				// defer gAppList.mu.Unlock()
-				fmt.Printf("DEPLOYMENT ADDED: %s %s\n", dpl_add.Name, dpl_add.Labels)
-				label_list := []string{}
-				for k, v := range dpl_add.Labels {
-					label_list = append(label_list, fmt.Sprintf("%s=%s", k, v))
-				}
-				producerChan <- map[string]string{
-					"action": "add",
-					"type":   "app",
-					"name":   dpl_add.Name,
-					"labels": strings.Join(label_list, ","),
-				}
-				// n:= NewApp(dpl_add)
-				// gAppList.appList = append(gAppList.appList, NewApp(*dpl_add))
-				// appChan <- &gAppList
+				fmt.Printf("DEPLOYMENT ADDED: %s %s\n", dplAdd.Name, dplAdd.Labels)
+				sendAppMessage(dplAdd, kafkaProducer.Channel, services.Add)
 			}()
-		case dpl_del := <-del_chan:
+		case dplDel := <-delChan:
 			func() {
+				fmt.Printf("DEPLOYMENT DELETED: %s %s\n", dplDel.Name, dplDel.Labels)
+				sendAppMessage(dplDel, kafkaProducer.Channel, services.Del)
 
-				gAppList.mu.Lock()
-				defer gAppList.mu.Unlock()
-				prevAppList.mu.Lock()
-				defer prevAppList.mu.Unlock()
-				logger.Info(fmt.Sprintf("DEPLOYMENT DELETED: %s %s\n", dpl_del.Name, dpl_del.Labels))
-
-				prevAppList.appList = slices.DeleteFunc(prevAppList.appList, func(a AnApp) bool { return a.Equal(NewApp(*dpl_del)) })
-				gAppList.appList = slices.DeleteFunc(gAppList.appList, func(a AnApp) bool { return a.Equal(NewApp(*dpl_del)) })
-				appChan <- &gAppList
-				delAppChan <- NewApp(*dpl_del)
 			}()
-		case dpl_upd := <-upd_chan:
+		case dplUpd := <-updChan:
 			// pull current safeApp
 			func() {
-
-				gAppList.mu.Lock()
-
-				defer gAppList.mu.Unlock()
-
-				updatedApp := NewApp(*dpl_upd)
-
-				logger.Info(fmt.Sprintf("DEPLOYMENT UPDATED: %s %s\n", dpl_upd.Name, dpl_upd.Labels))
-				// remove app to be updated
-				gAppList.appList = slices.DeleteFunc(gAppList.appList, func(a AnApp) bool { return a.Equal(updatedApp) })
-
-				gAppList.appList = append(gAppList.appList, updatedApp)
-				appChan <- &gAppList
+				fmt.Printf("DEPLOYMENT UPDATED: %s %s\n", dplUpd.Name, dplUpd.Labels)
+				sendAppMessage(dplUpd, kafkaProducer.Channel, services.Del)
+			}()
+		case e := <-errChan:
+			func() {
+				fmt.Printf("CheckDeplLoop err == %s\n", e)
 			}()
 		case <-ctx.Done():
-			logger.Info(fmt.Sprintln("CheckDeplLoop All done!"))
+			fmt.Println("CheckDeplLoop All done!")
 			break CheckDeplLoop
 		}
 	}
-	wg.Done()
+}
+
+func handleUpdateLoop(appList *SafeAppSlice, clientset ciliumclientset.Interface, kafkaCfg kafka.ConfigMap, errChan chan error, ctx context.Context) {
+	kafkaConsumer := services.NewConsumerWithJsonChan[services.DeploymentMessage](kafkaCfg, services.AppList, ctx)
+	kafkaProducer := services.NewProducerWithJsonChan(kafkaCfg, services.AdvList, ctx)
+
+	if errChan == nil {
+		errChan := make(chan error, 3)
+		go kafkaConsumer.Watch(errChan)
+		go kafkaProducer.Watch(errChan)
+	} else {
+		go kafkaConsumer.Watch(errChan)
+		go kafkaProducer.Watch(errChan)
+	}
+
+UpdateListsLoop:
+	for {
+		select {
+		case aMsg := <-kafkaConsumer.Channel:
+			name, tags, err := handleAction(aMsg, appList, clientset, errChan, ctx)
+			if err != nil {
+				errChan <- fmt.Errorf("case aMsg applyManifest %w", err)
+			}
+			sendAppMessage(name, tags, kafkaProducer.Channel, services.Add)
+		case e := <-errChan:
+			fmt.Printf("handleUpdateLoop UpdateListsLoop err == %s\n", e)
+		case <-ctx.Done():
+			fmt.Println("UpdateListsLoop All done!")
+			break UpdateListsLoop
+		}
+	}
+}
+
+func handleAction(aMsg services.DeploymentMessage, appList *SafeAppSlice, clientset ciliumclientset.Interface, errChan chan error, ctx context.Context) (string, map[string]string, error) {
+
+	tmpApp := NewApp(aMsg.Name, aMsg.Labels)
+	switch aMsg.Action {
+	case services.Add:
+		return handleAdd(tmpApp, appList, clientset, errChan, ctx)
+	case services.Del:
+		return handleDel(tmpApp, appList, clientset, errChan, ctx)
+	case services.Upd:
+		return handleUpd(tmpApp, appList, clientset, errChan, ctx)
+	default:
+		return "", map[string]string{}, fmt.Errorf("handleAction uknown action: stringRepr=%s intRepr=%d", aMsg.Action, aMsg.Action)
+	}
+}
+
+func handleAdd(a AnApp, appList *SafeAppSlice, clientset ciliumclientset.Interface, errChan chan error, ctx context.Context) (string, map[string]string, error) {
+	appList.mu.Lock()
+	defer appList.mu.Unlock()
+
+	if a.isExportBgpTenant() && !slices.ContainsFunc(appList.appList, a.DeepEqual) {
+		appList.appList = append(appList.appList, a)
+		adv := NewCiliumBGPAdvert(a)
+		err := adv.applyManifest(clientset, ctx)
+		if err != nil {
+			return "", map[string]string{}, err
+		}
+	}
+	return a.Name, a.Tags, nil
+}
+
+func handleDel(a AnApp, appList *SafeAppSlice, clientset ciliumclientset.Interface, errChan chan error, ctx context.Context) (string, map[string]string, error) {
+	appList.mu.Lock()
+	defer appList.mu.Unlock()
+
+	if slices.ContainsFunc(appList.appList, a.DeepEqual) {
+		appList.appList = slices.DeleteFunc(appList.appList, a.DeepEqual)
+		adv := NewCiliumBGPAdvert(a)
+		err := adv.removeAdv(clientset, ctx)
+		if err != nil {
+			return "", map[string]string{}, err
+		}
+	}
+	return a.Name, a.Tags, nil
+}
+
+func handleUpd(a AnApp, appList *SafeAppSlice, clientset ciliumclientset.Interface, errChan chan error, ctx context.Context) (string, map[string]string, error) {
+	appList.mu.Lock()
+	defer appList.mu.Unlock()
+
+	if a.isExportBgpTenant() && slices.ContainsFunc(appList.appList, a.DeepEqual) {
+		appList.appList = slices.DeleteFunc(appList.appList, a.DeepEqual)
+		appList.appList = append(appList.appList, a)
+		adv := NewCiliumBGPAdvert(a)
+		err := adv.applyManifest(clientset, ctx)
+		if err != nil {
+			return "", map[string]string{}, err
+		}
+	} else if !a.isExportBgpTenant() && slices.ContainsFunc(appList.appList, a.DeepEqual) {
+		// cover edge where depl is changed and now unexportable i so smart
+		appList.appList = slices.DeleteFunc(appList.appList, a.DeepEqual)
+		appList.appList = append(appList.appList, a)
+		adv := NewCiliumBGPAdvert(a)
+		err := adv.removeAdv(clientset, ctx)
+		if err != nil {
+			return "", map[string]string{}, err
+		}
+	} else {
+		return "", map[string]string{}, fmt.Errorf("handleUpd else ... this shouldn't happen something is borked name=%s tags=%v", a.Name, a.Tags)
+	}
+	return a.Name, a.Tags, nil
 }

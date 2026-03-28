@@ -1,4 +1,4 @@
-package main
+package kubeexample
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ciliumclientset "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
+	"github.com/justarabbi-t/kube_example.git/services"
 	appsv1 "k8s.io/api/apps/v1"
 
 	"k8s.io/client-go/informers"
@@ -63,6 +64,7 @@ func main() {
 	}
 
 	factory := informers.NewSharedInformerFactoryWithOptions(clientset, 10*time.Minute, informers.WithNamespace(cfg.watchNameSpace))
+
 	// setup initial struct chan
 	var wg sync.WaitGroup
 	wg.Add(4)
@@ -76,6 +78,8 @@ func main() {
 		mu:      sync.Mutex{},
 		advList: []CiliumBgpAdvert{},
 	}
+	errChan := make(chan error, 3)
+	defer close(errChan)
 	advChan := make(chan *SafeAdvSlice, 3)
 	advChan <- &gAdvertList
 	defer close(advChan)
@@ -91,34 +95,35 @@ func main() {
 	delAppChan := make(chan AnApp, 3)
 	defer close(delAppChan)
 
-	add_ch := make(chan *appsv1.Deployment, 3)
-	del_ch := make(chan *appsv1.Deployment, 3)
-	upd_ch := make(chan *appsv1.Deployment, 3)
+	addChan := make(chan *appsv1.Deployment, 3)
+	delChan := make(chan *appsv1.Deployment, 3)
+	updChan := make(chan *appsv1.Deployment, 3)
+	defer close(addChan)
+	defer close(delChan)
+	defer close(updChan)
 
 	depInform := factory.Apps().V1().Deployments().Informer()
 	depInform.AddEventHandler(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				depl := obj.(*appsv1.Deployment)
-				add_ch <- depl
+				addChan <- depl
 			},
 			UpdateFunc: func(oldObj, newObj interface{}) {
 				depl := newObj.(*appsv1.Deployment)
-				upd_ch <- depl
+				updChan <- depl
 			},
 			DeleteFunc: func(obj interface{}) {
 				depl := obj.(*appsv1.Deployment)
-				del_ch <- depl
+				delChan <- depl
 			},
 		},
 	)
 
 	factory.Start(ctx.Done())
-
-	go func() {
-
-		// CheckDeplLoop:
-	}()
+	kafkaCfg := services.NewCfgMap("kubeExample")
+	// CheckDeplLoop:
+	go handleDepChannels(addChan, updChan, delChan, kafkaCfg, errChan, ctx)
 
 	go func() {
 	UpdateListsLoop:

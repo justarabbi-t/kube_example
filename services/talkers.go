@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -20,19 +19,19 @@ var kConfig kafka.ConfigMap = kafka.ConfigMap{
 
 type ProducerWithChan struct {
 	Producer *kafka.Producer
-	channel  <-chan map[string]string
-	topic    string
-	ctx      context.Context
+	Channel  chan json.Marshaler
+	Ctx      context.Context
+	Topic    Topic
 }
 
 func getAppUuid(n string) string {
 	return strings.ToUpper(fmt.Sprintf("%s_%s", n, uuid.New()))
 }
 
-func getCfgMap(n string) kafka.ConfigMap {
+func NewCfgMap(clientId string) kafka.ConfigMap {
 	cfg := maps.Clone(kConfig)
-	if n != "" {
-		cfg["client.id"] = getAppUuid(n)
+	if clientId != "" {
+		cfg["client.id"] = getAppUuid(clientId)
 	} else {
 		if s, ok := cfg["client.id"].(string); ok {
 			cfg["client.id"] = getAppUuid(s)
@@ -42,94 +41,89 @@ func getCfgMap(n string) kafka.ConfigMap {
 	}
 	return cfg
 }
-func (p *ProducerWithChan) Watch(e chan error) {
-	watchKafkaTalker(p, e)
-}
 
-func NewProducerWithChan(c <-chan map[string]string, appName string, topic string, ctx context.Context) *ProducerWithChan {
-	cfg := getCfgMap(appName)
-	producer, err := kafka.NewProducer(&cfg)
+func NewProducerWithJsonChan(kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) *ProducerWithChan {
+	c := make(chan json.Marshaler, 3)
+	producer, err := kafka.NewProducer(&kafkaCfg)
 	if err != nil {
 		return nil
 	}
 	return &ProducerWithChan{
-		channel:  c,
+		Channel:  c,
 		Producer: producer,
-		topic:    topic,
-		ctx:      ctx,
+		Ctx:      ctx,
+		Topic:    topic,
 	}
 }
 
-type ConsumerWithChan struct {
+type ConsumerWithChan[T json.Unmarshaler] struct {
 	Consumer *kafka.Consumer
-	channel  chan<- map[string]string
-	topic    string
-	ctx      context.Context
+	Channel  chan T
+	Ctx      context.Context
+	Topic    Topic
 }
 
-func (c *ConsumerWithChan) Watch(e chan error) {
-	watchKafkaTalker(c, e)
-}
-
-func NewConsumerWithChan(c chan<- map[string]string, appName string, topic string, ctx context.Context) *ConsumerWithChan {
-	cfg := getCfgMap(appName)
-	Consumer, err := kafka.NewConsumer(&cfg)
+func NewConsumerWithJsonChan[T json.Unmarshaler](kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) *ConsumerWithChan[T] {
+	c := make(chan T, 3)
+	Consumer, err := kafka.NewConsumer(&kafkaCfg)
 	if err != nil {
 		return nil
 	}
-	return &ConsumerWithChan{
-		channel:  c,
+	return &ConsumerWithChan[T]{
+		Channel:  c,
 		Consumer: Consumer,
-		topic:    topic,
-		ctx:      ctx,
+		Ctx:      ctx,
+		Topic:    topic,
+	}
+}
+func (c *ConsumerWithChan[T]) Watch(e chan<- error) {
+	defer c.Consumer.Close()
+	c.Consumer.Subscribe(c.Topic.String(), nil)
+
+ConsumerLoop:
+	for {
+		select {
+		case <-c.Ctx.Done():
+			fmt.Println("ctx.Done Exiting ProducerLoop")
+			break ConsumerLoop
+		default:
+			event := c.Consumer.Poll(100)
+			if m, ok := event.(*kafka.Message); ok {
+				fmt.Printf("Message on %s:\n%s\n", m.TopicPartition, string(m.Value))
+				msg := *new(T)
+				err := msg.UnmarshalJSON(m.Value)
+				if err != nil {
+					e <- fmt.Errorf("ConsumerWithChan.Watch ConsumerLoop %w", err)
+				}
+				c.Channel <- msg
+			} else if err, ok := event.(kafka.Error); ok {
+				fmt.Printf("Error: %v\n", err)
+				e <- fmt.Errorf("ConsumerWithChan.Watch ConsumerLoop %w", err)
+			}
+		}
 	}
 }
 
-type Watcher interface {
-	watch(e chan error)
-}
-
-func watchKafkaTalker(talker any, e chan error) {
-	switch t := talker.(type) {
-	case ConsumerWithChan:
-		t.watch(e)
-		e <- nil
-	case ProducerWithChan:
-		t.watch(e)
-		e <- nil
-	default:
-		e <- errors.New("watchKafkaTalker talker is unknown type")
-	}
-}
-func (c *ConsumerWithChan) watch(e chan error) {
-	c.readKafkaWriteChan(e)
-}
-
-func (c *ConsumerWithChan) readKafkaWriteChan(e chan error) {
-	return func() error { return errors.New("unimplemented") }()
-}
-
-func (p *ProducerWithChan) watch(e chan error) {
-	p.readChanWriteKafka(e)
-}
-func (p *ProducerWithChan) readChanWriteKafka(e chan error) {
+func (p *ProducerWithChan) Watch(e chan<- error) {
+	defer p.Producer.Close()
 ProducerLoop:
 	for {
 		select {
-		case anAction := <-p.channel:
+		case anAction := <-p.Channel:
 			msg, err := json.Marshal(anAction)
 			if err != nil {
-				fmt.Printf("warning err: %s", err)
+				e <- fmt.Errorf("warning err: %w", err)
 				continue ProducerLoop
 			}
+			topic := p.Topic.String()
 			p.Producer.Produce(&kafka.Message{
 				TopicPartition: kafka.TopicPartition{
-					Topic:     &p.topic,
+					Topic:     &topic,
 					Partition: kafka.PartitionAny,
 				},
-				Value: []byte(msg),
+				Value: msg,
 			}, nil)
-		case <-p.ctx.Done():
+		case <-p.Ctx.Done():
 			fmt.Println("ctx.Done Exiting ProducerLoop")
 			break ProducerLoop
 		}

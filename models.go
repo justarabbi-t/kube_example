@@ -1,4 +1,4 @@
-package main
+package kubeexample
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	ciliumclientset "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	v1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
-	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
@@ -21,10 +20,11 @@ type SafeAppSlice struct {
 	mu      sync.Mutex
 	appList []AnApp
 }
-type SafeAdvSlice struct {
-	mu      sync.Mutex
-	advList []CiliumBgpAdvert
-}
+
+// type SafeAdvSlice struct {
+// 	mu      sync.Mutex
+// 	advList []CiliumBgpAdvert
+// }
 
 func checkMap(k string, m map[string]string) bool {
 	_, ok := m[k]
@@ -33,15 +33,15 @@ func checkMap(k string, m map[string]string) bool {
 
 type AnApp struct {
 	Name string
-	tags map[string]string
+	Tags map[string]string
 }
 
-func NewApp(a appsv1.Deployment) AnApp {
-	return AnApp{a.Name, a.Labels}
+func NewApp(name string, tags map[string]string) AnApp {
+	return AnApp{name, tags}
 }
 
 func (a1 AnApp) tagsEqual(a2 AnApp) bool {
-	return maps.Equal(a1.tags, a2.tags)
+	return maps.Equal(a1.Tags, a2.Tags)
 }
 func (a1 AnApp) DeepEqual(a2 AnApp) bool {
 	return a1.Name == a2.Name && a1.getTenantName() == a2.getTenantName() && a1.tagsEqual(a2)
@@ -52,14 +52,14 @@ func (a1 AnApp) Equal(a2 AnApp) bool {
 }
 
 func (a AnApp) getVrf() string {
-	if checkMap("vrf", a.tags) {
-		return a.tags["vrf"]
+	if checkMap("vrf", a.Tags) {
+		return a.Tags["vrf"]
 	}
 	return ""
 }
 
 func (a AnApp) isExportBgpTenant() bool {
-	if checkMap("vrf", a.tags) && checkMap("exportBgp", a.tags) && checkMap("tenantName", a.tags) {
+	if checkMap("vrf", a.Tags) && checkMap("exportBgp", a.Tags) && checkMap("tenantName", a.Tags) {
 		return true
 	}
 	return false
@@ -68,15 +68,15 @@ func (a AnApp) isExportBgpTenant() bool {
 func (a AnApp) getAdvertiseTypes() []string {
 	advertTypes := []string{}
 
-	if checkMap("advertTypes", a.tags) {
-		advertTypes = append(advertTypes, strings.Split(a.tags["advertTypes"], ".")...)
+	if checkMap("advertTypes", a.Tags) {
+		advertTypes = append(advertTypes, strings.Split(a.Tags["advertTypes"], ".")...)
 	}
 	return advertTypes
 }
 
 func (a AnApp) getTenantName() string {
-	if checkMap("tenantName", a.tags) {
-		return a.tags["tenantName"]
+	if checkMap("tenantName", a.Tags) {
+		return a.Tags["tenantName"]
 	}
 	return ""
 }
