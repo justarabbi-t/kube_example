@@ -116,56 +116,8 @@ func main() {
 	factory.Start(ctx.Done())
 
 	go func() {
-	CheckDeplLoop:
-		for {
-			select {
-			case dpl_add := <-add_ch:
-				func() {
 
-					gAppList.mu.Lock()
-					defer gAppList.mu.Unlock()
-
-					logger.Info(fmt.Sprintf("DEPLOYMENT ADDED: %s %s\n", dpl_add.Name, dpl_add.Labels))
-					gAppList.appList = append(gAppList.appList, NewApp(*dpl_add))
-					appChan <- &gAppList
-				}()
-			case dpl_del := <-del_ch:
-				func() {
-
-					gAppList.mu.Lock()
-					defer gAppList.mu.Unlock()
-					prevAppList.mu.Lock()
-					defer prevAppList.mu.Unlock()
-					logger.Info(fmt.Sprintf("DEPLOYMENT DELETED: %s %s\n", dpl_del.Name, dpl_del.Labels))
-
-					prevAppList.appList = slices.DeleteFunc(prevAppList.appList, func(a AnApp) bool { return a.Equal(NewApp(*dpl_del)) })
-					gAppList.appList = slices.DeleteFunc(gAppList.appList, func(a AnApp) bool { return a.Equal(NewApp(*dpl_del)) })
-					appChan <- &gAppList
-					delAppChan <- NewApp(*dpl_del)
-				}()
-			case dpl_upd := <-upd_ch:
-				// pull current safeApp
-				func() {
-
-					gAppList.mu.Lock()
-
-					defer gAppList.mu.Unlock()
-
-					updatedApp := NewApp(*dpl_upd)
-
-					logger.Info(fmt.Sprintf("DEPLOYMENT UPDATED: %s %s\n", dpl_upd.Name, dpl_upd.Labels))
-					// remove app to be updated
-					gAppList.appList = slices.DeleteFunc(gAppList.appList, func(a AnApp) bool { return a.Equal(updatedApp) })
-
-					gAppList.appList = append(gAppList.appList, updatedApp)
-					appChan <- &gAppList
-				}()
-			case <-ctx.Done():
-				logger.Info(fmt.Sprintln("CheckDeplLoop All done!"))
-				break CheckDeplLoop
-			}
-		}
-		wg.Done()
+		// CheckDeplLoop:
 	}()
 
 	go func() {

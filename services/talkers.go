@@ -1,6 +1,9 @@
 package services
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -15,26 +18,11 @@ var kConfig kafka.ConfigMap = kafka.ConfigMap{
 	"acks":              "all",
 }
 
-type GenericTopic int
-
-const (
-	Topic1 GenericTopic = iota
-	Topic2
-	Topic3
-)
-
-func (g GenericTopic) String() string {
-	return [...]string{"Topic1", "Topic2", "Topic3"}[g]
-}
-
-type EnumLike interface {
-	~int | ~string
-}
-
-type ProducerWithChan[T1 any, T2 EnumLike] struct {
+type ProducerWithChan struct {
 	Producer *kafka.Producer
-	channel  <-chan T1
-	topic    T2
+	channel  <-chan map[string]string
+	topic    string
+	ctx      context.Context
 }
 
 func getAppUuid(n string) string {
@@ -54,41 +42,96 @@ func getCfgMap(n string) kafka.ConfigMap {
 	}
 	return cfg
 }
+func (p *ProducerWithChan) Watch(e chan error) {
+	watchKafkaTalker(p, e)
+}
 
-func NewProducerWithChan[T1 any, T2 EnumLike](c <-chan T1, appName string, topic T2) *ProducerWithChan[T1, T2] {
+func NewProducerWithChan(c <-chan map[string]string, appName string, topic string, ctx context.Context) *ProducerWithChan {
 	cfg := getCfgMap(appName)
 	producer, err := kafka.NewProducer(&cfg)
 	if err != nil {
 		return nil
 	}
-	return &ProducerWithChan[T1, T2]{
+	return &ProducerWithChan{
 		channel:  c,
 		Producer: producer,
 		topic:    topic,
+		ctx:      ctx,
 	}
 }
 
-type ConsumerWithChan[T1 any, T2 EnumLike] struct {
+type ConsumerWithChan struct {
 	Consumer *kafka.Consumer
-	channel  chan<- T1
-	topic    T2
+	channel  chan<- map[string]string
+	topic    string
+	ctx      context.Context
 }
 
-func NewConsumerWithChan[T1 any, T2 EnumLike](c chan<- T1, appName string, topic T2) *ConsumerWithChan[T1, T2] {
+func (c *ConsumerWithChan) Watch(e chan error) {
+	watchKafkaTalker(c, e)
+}
+
+func NewConsumerWithChan(c chan<- map[string]string, appName string, topic string, ctx context.Context) *ConsumerWithChan {
 	cfg := getCfgMap(appName)
 	Consumer, err := kafka.NewConsumer(&cfg)
 	if err != nil {
 		return nil
 	}
-	return &ConsumerWithChan[T1, T2]{
+	return &ConsumerWithChan{
 		channel:  c,
 		Consumer: Consumer,
 		topic:    topic,
+		ctx:      ctx,
 	}
 }
-func main() {
-	c := make(chan string, 1)
-	d1 := NewConsumerWithChan[string](c, "")
-	d2 := NewProducerWithChan[string](c, "")
 
+type Watcher interface {
+	watch(e chan error)
+}
+
+func watchKafkaTalker(talker any, e chan error) {
+	switch t := talker.(type) {
+	case ConsumerWithChan:
+		t.watch(e)
+		e <- nil
+	case ProducerWithChan:
+		t.watch(e)
+		e <- nil
+	default:
+		e <- errors.New("watchKafkaTalker talker is unknown type")
+	}
+}
+func (c *ConsumerWithChan) watch(e chan error) {
+	c.readKafkaWriteChan(e)
+}
+
+func (c *ConsumerWithChan) readKafkaWriteChan(e chan error) {
+	return func() error { return errors.New("unimplemented") }()
+}
+
+func (p *ProducerWithChan) watch(e chan error) {
+	p.readChanWriteKafka(e)
+}
+func (p *ProducerWithChan) readChanWriteKafka(e chan error) {
+ProducerLoop:
+	for {
+		select {
+		case anAction := <-p.channel:
+			msg, err := json.Marshal(anAction)
+			if err != nil {
+				fmt.Printf("warning err: %s", err)
+				continue ProducerLoop
+			}
+			p.Producer.Produce(&kafka.Message{
+				TopicPartition: kafka.TopicPartition{
+					Topic:     &p.topic,
+					Partition: kafka.PartitionAny,
+				},
+				Value: []byte(msg),
+			}, nil)
+		case <-p.ctx.Done():
+			fmt.Println("ctx.Done Exiting ProducerLoop")
+			break ProducerLoop
+		}
+	}
 }
