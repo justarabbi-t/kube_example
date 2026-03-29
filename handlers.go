@@ -40,13 +40,13 @@ func sendAppMessage(name string, labels map[string]string, c chan json.Marshaler
 }
 
 func handleDepChannels(addChan, updChan, delChan chan *appsv1.Deployment, kafkaCfg kafka.ConfigMap, errChan chan error, ctx context.Context) {
-	kafkaProducer := services.NewProducerWithJsonChan(kafkaCfg, services.AppList, ctx)
-	if errChan == nil {
-		errChan := make(chan error, 3)
-		go kafkaProducer.Watch(errChan)
-	} else {
-		go kafkaProducer.Watch(errChan)
+	defer ctx.Done()
+	kafkaProducer, err := services.NewProducerWithJsonChan(kafkaCfg, services.AppList, ctx)
+	if err != nil {
+		errChan <- err
+		return
 	}
+	go kafkaProducer.Watch(errChan)
 
 CheckDeplLoop:
 	for {
@@ -54,19 +54,19 @@ CheckDeplLoop:
 		case dplAdd := <-addChan:
 			func() {
 				fmt.Printf("DEPLOYMENT ADDED: %s %s\n", dplAdd.Name, dplAdd.Labels)
-				sendAppMessage(dplAdd, kafkaProducer.Channel, services.Add)
+				sendAppMessage(dplAdd.Name, dplAdd.Labels, kafkaProducer.Channel, services.Add)
 			}()
 		case dplDel := <-delChan:
 			func() {
 				fmt.Printf("DEPLOYMENT DELETED: %s %s\n", dplDel.Name, dplDel.Labels)
-				sendAppMessage(dplDel, kafkaProducer.Channel, services.Del)
+				sendAppMessage(dplDel.Name, dplDel.Labels, kafkaProducer.Channel, services.Del)
 
 			}()
 		case dplUpd := <-updChan:
 			// pull current safeApp
 			func() {
 				fmt.Printf("DEPLOYMENT UPDATED: %s %s\n", dplUpd.Name, dplUpd.Labels)
-				sendAppMessage(dplUpd, kafkaProducer.Channel, services.Del)
+				sendAppMessage(dplUpd.Name, dplUpd.Labels, kafkaProducer.Channel, services.Del)
 			}()
 		case e := <-errChan:
 			func() {
@@ -80,17 +80,20 @@ CheckDeplLoop:
 }
 
 func handleUpdateLoop(appList *SafeAppSlice, clientset ciliumclientset.Interface, kafkaCfg kafka.ConfigMap, errChan chan error, ctx context.Context) {
-	kafkaConsumer := services.NewConsumerWithJsonChan[services.DeploymentMessage](kafkaCfg, services.AppList, ctx)
-	kafkaProducer := services.NewProducerWithJsonChan(kafkaCfg, services.AdvList, ctx)
-
-	if errChan == nil {
-		errChan := make(chan error, 3)
-		go kafkaConsumer.Watch(errChan)
-		go kafkaProducer.Watch(errChan)
-	} else {
-		go kafkaConsumer.Watch(errChan)
-		go kafkaProducer.Watch(errChan)
+	defer ctx.Done()
+	kafkaConsumer, err := services.NewConsumerWithJsonChan[services.DeploymentMessage](kafkaCfg, services.AppList, ctx)
+	if err != nil {
+		errChan <- err
+		return
 	}
+	kafkaProducer, err := services.NewProducerWithJsonChan(kafkaCfg, services.AdvList, ctx)
+	if err != nil {
+		errChan <- err
+		return
+	}
+
+	go kafkaProducer.Watch(errChan)
+	go kafkaConsumer.Watch(errChan)
 
 UpdateListsLoop:
 	for {
@@ -101,8 +104,8 @@ UpdateListsLoop:
 				errChan <- fmt.Errorf("case aMsg applyManifest %w", err)
 			}
 			sendAppMessage(name, tags, kafkaProducer.Channel, services.Add)
-		case e := <-errChan:
-			fmt.Printf("handleUpdateLoop UpdateListsLoop err == %s\n", e)
+		// case e := <-errChan:
+		// 	fmt.Printf("handleUpdateLoop UpdateListsLoop err == %s\n", e)
 		case <-ctx.Done():
 			fmt.Println("UpdateListsLoop All done!")
 			break UpdateListsLoop

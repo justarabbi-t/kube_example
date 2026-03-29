@@ -21,11 +21,6 @@ type SafeAppSlice struct {
 	appList []AnApp
 }
 
-// type SafeAdvSlice struct {
-// 	mu      sync.Mutex
-// 	advList []CiliumBgpAdvert
-// }
-
 func checkMap(k string, m map[string]string) bool {
 	_, ok := m[k]
 	return ok
@@ -205,7 +200,7 @@ func (c CiliumBgpAdvert) isRemovable(clientset kubernetes.Clientset, namespace s
 		return false, err
 	}
 	for _, depl := range allDepls.Items {
-		a2 := NewApp(depl)
+		a2 := NewApp(depl.Name, depl.Labels)
 		if c.app.tagsEqual(a2) {
 			return false, nil
 		}

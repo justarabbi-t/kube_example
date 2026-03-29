@@ -4,6 +4,8 @@ go 1.25.6
 
 require (
 	github.com/cilium/cilium v1.19.1
+	github.com/confluentinc/confluent-kafka-go v1.9.2
+	github.com/google/uuid v1.6.0
 	k8s.io/api v0.35.2
 	k8s.io/apimachinery v0.35.2
 	k8s.io/client-go v0.35.2
@@ -20,7 +22,6 @@ require (
 	github.com/cilium/proxy v0.0.0-20250623105955-2136f59a4ea1 // indirect
 	github.com/cilium/statedb v0.5.6 // indirect
 	github.com/cilium/stream v0.0.1 // indirect
-	github.com/confluentinc/confluent-kafka-go v1.9.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
@@ -51,7 +52,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

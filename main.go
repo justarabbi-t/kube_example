@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -66,40 +65,21 @@ func main() {
 	factory := informers.NewSharedInformerFactoryWithOptions(clientset, 10*time.Minute, informers.WithNamespace(cfg.watchNameSpace))
 
 	// setup initial struct chan
-	var wg sync.WaitGroup
-	wg.Add(4)
+	// var wg sync.WaitGroup
+	// wg.Add(2)
 
-	prevAppList := SafeAppSlice{
+	safeAppList := SafeAppSlice{
 		mu:      sync.Mutex{},
 		appList: []AnApp{},
 	}
 
-	gAdvertList := SafeAdvSlice{
-		mu:      sync.Mutex{},
-		advList: []CiliumBgpAdvert{},
-	}
 	errChan := make(chan error, 3)
 	defer close(errChan)
-	advChan := make(chan *SafeAdvSlice, 3)
-	advChan <- &gAdvertList
-	defer close(advChan)
-
-	gAppList := SafeAppSlice{
-		mu:      sync.Mutex{},
-		appList: []AnApp{},
-	}
-	appChan := make(chan *SafeAppSlice, 3)
-	appChan <- &gAppList
-	defer close(appChan)
-
-	delAppChan := make(chan AnApp, 3)
-	defer close(delAppChan)
-
 	addChan := make(chan *appsv1.Deployment, 3)
-	delChan := make(chan *appsv1.Deployment, 3)
-	updChan := make(chan *appsv1.Deployment, 3)
 	defer close(addChan)
+	delChan := make(chan *appsv1.Deployment, 3)
 	defer close(delChan)
+	updChan := make(chan *appsv1.Deployment, 3)
 	defer close(updChan)
 
 	depInform := factory.Apps().V1().Deployments().Informer()
@@ -121,120 +101,21 @@ func main() {
 	)
 
 	factory.Start(ctx.Done())
-	kafkaCfg := services.NewCfgMap("kubeExample")
+	kafkaCfg := services.NewCfgMap("kubeExample", "kubeExample")
 	// CheckDeplLoop:
 	go handleDepChannels(addChan, updChan, delChan, kafkaCfg, errChan, ctx)
 
-	go func() {
-	UpdateListsLoop:
-		for {
-			select {
-			case safeApp := <-appChan:
-				func() {
+	go handleUpdateLoop(&safeAppList, ciliumClientSet, kafkaCfg, errChan, ctx)
 
-					safeApp.mu.Lock()
-					defer safeApp.mu.Unlock()
+	select {
+	case err := <-errChan:
+		logger.Error("main select", "err", err)
+	case <-ctx.Done():
+		err := ctx.Err()
+		logger.Info("Context cancelled! Exiting!", "ctx", err)
+	}
 
-					prevAppList.mu.Lock()
-					defer prevAppList.mu.Unlock()
-
-					for _, app := range safeApp.appList {
-						// append if app is not equal to any in prevapplist, compares appname,tenantname, and tags
-						if !slices.ContainsFunc(prevAppList.appList, app.DeepEqual) && app.isExportBgpTenant() {
-							func() {
-								// place inside anon func to ensure defer mu.unlock executed after ea loop iteration
-								gAdvertList.mu.Lock()
-								defer gAdvertList.mu.Unlock()
-
-								cilBgpAdv := NewCiliumBGPAdvert(app)
-								gAdvertList.advList = slices.DeleteFunc(gAdvertList.advList, func(a CiliumBgpAdvert) bool { return a.Equal(cilBgpAdv) })
-								gAdvertList.advList = append(gAdvertList.advList, cilBgpAdv)
-								// check for matching tenant and app name and delete, cover case where tags are diff
-								// prevAppList.appList = slices.DeleteFunc(prevAppList.appList, func(a AnApp) bool { return a.Equal(app) })
-								prevAppList.appList = append(prevAppList.appList, app)
-								advChan <- &gAdvertList
-							}()
-						}
-					}
-
-				}()
-
-			case <-ctx.Done():
-				logger.Info(fmt.Sprintln("UpdateListsLoop All done!"))
-				break UpdateListsLoop
-			}
-		}
-		wg.Done()
-	}()
-
-	go func() {
-	ReactToAdvListLoop:
-		for {
-			select {
-			case adv := <-advChan:
-				func() {
-					adv.mu.Lock()
-					defer adv.mu.Unlock()
-					for _, a := range adv.advList {
-						err := a.applyManifest(ciliumClientSet, ctx)
-						if err != nil {
-							wErr := fmt.Errorf("ReactToAdvListLoop labelSel=%s advTypes=%v wrappedErr=%w", a.getLabelSelector().String(), a.advertTypes, err)
-							logger.Error("", "err", wErr)
-							// continue for now, revisit this when done de//buggering it
-							continue
-						}
-					}
-				}()
-
-			case <-ctx.Done():
-				logger.Info(fmt.Sprintln("ReactToAdvListLoop All done!"))
-				break ReactToAdvListLoop
-			}
-		}
-		wg.Done()
-	}()
-
-	go func() {
-	ReactToDelAppList:
-		for {
-			select {
-			case delApp := <-delAppChan:
-				func() {
-					logger.Debug("ReactToDelAppList ", "delApp", delApp.Name)
-					gAdvertList.mu.Lock()
-					defer gAdvertList.mu.Unlock()
-					removeIdx := []int{}
-					for idx, a2 := range gAdvertList.advList {
-						if delApp.DeepEqual(a2.app) {
-							removable, err := a2.isRemovable(*clientset, cfg.watchNameSpace, ctx)
-							if err != nil {
-								logger.Error("ReactToDelAppList loop", "err", fmt.Errorf("isRemovable %w", err))
-								continue
-							} else if removable {
-								err := a2.removeAdv(ciliumClientSet, ctx)
-								if err != nil {
-									logger.Error("ReactToDelAppList loop", "err", fmt.Errorf("removeAdv %w", err))
-								} else {
-									removeIdx = append(removeIdx, idx)
-								}
-							}
-						}
-					}
-
-					for i := range removeIdx {
-						gAdvertList.advList = slices.Delete(gAdvertList.advList, i, i)
-					}
-				}()
-
-			case <-ctx.Done():
-				logger.Info(fmt.Sprintln("ReactToDelAppList Loop All done!"))
-				break ReactToDelAppList
-			}
-		}
-		wg.Done()
-	}()
-
-	wg.Wait()
+	// wg.Wait()
 
 	if !cache.WaitForCacheSync(ctx.Done(), depInform.HasSynced) {
 		log.Panic("failed to sync informer caches")

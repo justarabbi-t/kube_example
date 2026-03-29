@@ -14,6 +14,7 @@ import (
 var kConfig kafka.ConfigMap = kafka.ConfigMap{
 	"bootstrap.servers": "docker.rabbit.home:9092",
 	"client.id":         "myProducer",
+	"group.id":          "myConsumer",
 	"acks":              "all",
 }
 
@@ -28,7 +29,7 @@ func getAppUuid(n string) string {
 	return strings.ToUpper(fmt.Sprintf("%s_%s", n, uuid.New()))
 }
 
-func NewCfgMap(clientId string) kafka.ConfigMap {
+func NewCfgMap(clientId, groupId string) kafka.ConfigMap {
 	cfg := maps.Clone(kConfig)
 	if clientId != "" {
 		cfg["client.id"] = getAppUuid(clientId)
@@ -39,21 +40,30 @@ func NewCfgMap(clientId string) kafka.ConfigMap {
 			cfg["client.id"] = getAppUuid("Default")
 		}
 	}
+	if groupId != "" {
+		cfg["group.id"] = getAppUuid(groupId)
+	} else {
+		if s, ok := cfg["group.id"].(string); ok {
+			cfg["group.id"] = getAppUuid(s)
+		} else {
+			cfg["group.id"] = getAppUuid("Default")
+		}
+	}
 	return cfg
 }
 
-func NewProducerWithJsonChan(kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) *ProducerWithChan {
+func NewProducerWithJsonChan(kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) (*ProducerWithChan, error) {
 	c := make(chan json.Marshaler, 3)
 	producer, err := kafka.NewProducer(&kafkaCfg)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("NewProducerWithJsonChan %w", err)
 	}
 	return &ProducerWithChan{
 		Channel:  c,
 		Producer: producer,
 		Ctx:      ctx,
 		Topic:    topic,
-	}
+	}, nil
 }
 
 type ConsumerWithChan[T json.Unmarshaler] struct {
@@ -63,18 +73,18 @@ type ConsumerWithChan[T json.Unmarshaler] struct {
 	Topic    Topic
 }
 
-func NewConsumerWithJsonChan[T json.Unmarshaler](kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) *ConsumerWithChan[T] {
+func NewConsumerWithJsonChan[T json.Unmarshaler](kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) (*ConsumerWithChan[T], error) {
 	c := make(chan T, 3)
 	Consumer, err := kafka.NewConsumer(&kafkaCfg)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("NewConsumerWithJsonChan %w", err)
 	}
 	return &ConsumerWithChan[T]{
 		Channel:  c,
 		Consumer: Consumer,
 		Ctx:      ctx,
 		Topic:    topic,
-	}
+	}, nil
 }
 func (c *ConsumerWithChan[T]) Watch(e chan<- error) {
 	defer c.Consumer.Close()
@@ -87,8 +97,11 @@ ConsumerLoop:
 			fmt.Println("ctx.Done Exiting ProducerLoop")
 			break ConsumerLoop
 		default:
+			fmt.Println("here1")
 			event := c.Consumer.Poll(100)
+			fmt.Println("here2")
 			if m, ok := event.(*kafka.Message); ok {
+				fmt.Println("here3")
 				fmt.Printf("Message on %s:\n%s\n", m.TopicPartition, string(m.Value))
 				msg := *new(T)
 				err := msg.UnmarshalJSON(m.Value)
@@ -97,10 +110,12 @@ ConsumerLoop:
 				}
 				c.Channel <- msg
 			} else if err, ok := event.(kafka.Error); ok {
+				fmt.Println("here4")
 				fmt.Printf("Error: %v\n", err)
 				e <- fmt.Errorf("ConsumerWithChan.Watch ConsumerLoop %w", err)
 			}
 		}
+		fmt.Println("here5")
 	}
 }
 
