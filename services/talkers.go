@@ -18,9 +18,9 @@ var kConfig kafka.ConfigMap = kafka.ConfigMap{
 	"acks":              "all",
 }
 
-type ProducerWithChan struct {
+type ProducerWithChan[T any] struct {
 	Producer *kafka.Producer
-	Channel  chan json.Marshaler
+	Channel  chan T
 	Ctx      context.Context
 	Topic    Topic
 }
@@ -52,13 +52,13 @@ func NewCfgMap(clientId, groupId string) kafka.ConfigMap {
 	return cfg
 }
 
-func NewProducerWithJsonChan(kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) (*ProducerWithChan, error) {
-	c := make(chan json.Marshaler, 3)
+func NewProducerWithJsonChan[T any](kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) (*ProducerWithChan[T], error) {
+	c := make(chan T, 3)
 	producer, err := kafka.NewProducer(&kafkaCfg)
 	if err != nil {
 		return nil, fmt.Errorf("NewProducerWithJsonChan %w", err)
 	}
-	return &ProducerWithChan{
+	return &ProducerWithChan[T]{
 		Channel:  c,
 		Producer: producer,
 		Ctx:      ctx,
@@ -66,14 +66,14 @@ func NewProducerWithJsonChan(kafkaCfg kafka.ConfigMap, topic Topic, ctx context.
 	}, nil
 }
 
-type ConsumerWithChan[T json.Unmarshaler] struct {
+type ConsumerWithChan[T any] struct {
 	Consumer *kafka.Consumer
 	Channel  chan T
 	Ctx      context.Context
 	Topic    Topic
 }
 
-func NewConsumerWithJsonChan[T json.Unmarshaler](kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) (*ConsumerWithChan[T], error) {
+func NewConsumerWithJsonChan[T any](kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) (*ConsumerWithChan[T], error) {
 	c := make(chan T, 3)
 	Consumer, err := kafka.NewConsumer(&kafkaCfg)
 	if err != nil {
@@ -104,7 +104,7 @@ ConsumerLoop:
 				fmt.Println("here3")
 				fmt.Printf("Message on %s:\n%s\n", m.TopicPartition, string(m.Value))
 				msg := *new(T)
-				err := msg.UnmarshalJSON(m.Value)
+				err := json.Unmarshal(m.Value, msg)
 				if err != nil {
 					e <- fmt.Errorf("ConsumerWithChan.Watch ConsumerLoop %w", err)
 				}
@@ -119,7 +119,7 @@ ConsumerLoop:
 	}
 }
 
-func (p *ProducerWithChan) Watch(e chan<- error) {
+func (p *ProducerWithChan[T]) Watch(e chan<- error) {
 	defer p.Producer.Close()
 ProducerLoop:
 	for {

@@ -2,7 +2,7 @@ package services
 
 import (
 	"encoding/json"
-	"fmt"
+	"maps"
 )
 
 type Action int
@@ -51,13 +51,34 @@ const (
 	Service
 )
 
+var actionSubjectMap = map[string]ActionSubject{
+	Deployment.String(): Deployment,
+	Pod.String():        Pod,
+	Daemonset.String():  Daemonset,
+	Service.String():    Service,
+}
+
+func ActionSubjectByName(name string) ActionSubject {
+	if a, ok := actionSubjectMap[name]; ok {
+		return a
+	}
+	return -1
+}
 func (a ActionSubject) String() string {
 	return [...]string{"Deployment", "Pod", "DaemonSet", "Service"}[a]
 }
 
 func (a ActionSubject) MarshalJSON() ([]byte, error) {
-	fmt.Println("yoyo2")
 	return json.Marshal(a.String())
+}
+
+func (a *ActionSubject) UnmarshalJSON(b []byte) error {
+	var outStr string
+	if err := json.Unmarshal(b, &outStr); err != nil {
+		return err
+	}
+	*a = ActionSubjectByName(outStr)
+	return nil
 }
 
 type Topic int
@@ -67,13 +88,31 @@ const (
 	AdvList
 )
 
+var topicMap = map[string]Topic{
+	AppList.String(): AppList,
+	AdvList.String(): AdvList,
+}
+
 func (t Topic) String() string {
 	return [...]string{"AppList", "AdvList"}[t]
 }
+func topicByName(name string) Topic {
+	if a, ok := topicMap[name]; ok {
+		return a
+	}
+	return -1
+}
 
 func (t Topic) MarshalJSON() ([]byte, error) {
-	fmt.Println("yoyo3")
 	return json.Marshal(t.String())
+}
+func (t *Topic) UnmarshalJSON(b []byte) error {
+	var outStr string
+	if err := json.Unmarshal(b, &outStr); err != nil {
+		return err
+	}
+	*t = topicByName(outStr)
+	return nil
 }
 
 type Message struct {
@@ -82,26 +121,19 @@ type Message struct {
 	Topic         Topic         `json:"Topic"`
 }
 
-// func (m Message) MarshalJSON() ([]byte, error) {
-// 	return json.Marshal(m)
-// }
-// func (m Message) UnmarshalJSON(b []byte) error {
-// 	return json.Unmarshal(b, &m)
-// }
-
 type DeploymentMessage struct {
 	Message `json:"Message"`
 	Labels  map[string]string `json:"Labels"`
 	Name    string            `json:"Name"`
 }
 
-// func (m DeploymentMessage) MarshalJSON() ([]byte, error) {
-// 	return json.Marshal(m)
-// }
-// func (m DeploymentMessage) UnmarshalJSON(b []byte) error {
-// 	return json.Unmarshal(b, &m)
-// }
+func (m DeploymentMessage) Send(c chan<- DeploymentMessage) {
+	c <- m
+}
+func (m1 Message) Equal(m2 Message) bool {
+	return m1.Action == m2.Action && m1.ActionSubject == m2.ActionSubject && m1.Topic == m2.Topic
+}
 
-// func (m DeploymentMessage) Send(c chan<- json.Marshaler) {
-// 	c <- m
-// }
+func (d1 DeploymentMessage) Equal(d2 DeploymentMessage) bool {
+	return d1.Name == d2.Name && maps.Equal(d1.Labels, d2.Labels) && d1.Message.Equal(d2.Message)
+}
