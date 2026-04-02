@@ -1,4 +1,4 @@
-package kubeexample
+package main
 
 import (
 	"context"
@@ -74,13 +74,9 @@ func main() {
 	}
 
 	errChan := make(chan error, 3)
-	defer close(errChan)
 	addChan := make(chan *appsv1.Deployment, 3)
-	defer close(addChan)
 	delChan := make(chan *appsv1.Deployment, 3)
-	defer close(delChan)
 	updChan := make(chan *appsv1.Deployment, 3)
-	defer close(updChan)
 
 	depInform := factory.Apps().V1().Deployments().Informer()
 	depInform.AddEventHandler(
@@ -91,6 +87,7 @@ func main() {
 			},
 			UpdateFunc: func(oldObj, newObj interface{}) {
 				depl := newObj.(*appsv1.Deployment)
+				fmt.Printf("sending to updChan, %v\n", depl)
 				updChan <- depl
 			},
 			DeleteFunc: func(obj interface{}) {
@@ -106,13 +103,20 @@ func main() {
 	go handleDepChannels(addChan, updChan, delChan, kafkaCfg, errChan, ctx)
 
 	go handleUpdateLoop(&safeAppList, ciliumClientSet, kafkaCfg, errChan, ctx)
-
-	select {
-	case err := <-errChan:
-		logger.Error("main select", "err", err)
-	case <-ctx.Done():
-		err := ctx.Err()
-		logger.Info("Context cancelled! Exiting!", "ctx", err)
+MainSelect:
+	for {
+		select {
+		case err := <-errChan:
+			logger.Error("main select", "err", err)
+		case <-ctx.Done():
+			err := ctx.Err()
+			defer close(errChan)
+			defer close(addChan)
+			defer close(delChan)
+			defer close(updChan)
+			logger.Info("Context cancelled! Exiting!", "ctx", err)
+			break MainSelect
+		}
 	}
 
 	// wg.Wait()

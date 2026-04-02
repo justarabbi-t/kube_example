@@ -1,4 +1,4 @@
-package kubeexample
+package main
 
 import (
 	"context"
