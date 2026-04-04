@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 )
 
@@ -128,6 +129,7 @@ type DeploymentMessage struct {
 }
 
 func (m DeploymentMessage) Send(c chan<- DeploymentMessage) {
+	fmt.Printf("\nSENDING MESSAGE: \n\t%v\n", m)
 	c <- m
 }
 func (m1 Message) Equal(m2 Message) bool {

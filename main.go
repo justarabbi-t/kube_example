@@ -83,15 +83,17 @@ func main() {
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				depl := obj.(*appsv1.Deployment)
+				fmt.Printf("sending to addChan, %s\n", depl.Name)
 				addChan <- depl
 			},
 			UpdateFunc: func(oldObj, newObj interface{}) {
 				depl := newObj.(*appsv1.Deployment)
-				fmt.Printf("sending to updChan, %v\n", depl)
+				fmt.Printf("sending to updChan, %s\n", depl.Name)
 				updChan <- depl
 			},
 			DeleteFunc: func(obj interface{}) {
 				depl := obj.(*appsv1.Deployment)
+				fmt.Printf("sending to delChan, %s\n", depl.Name)
 				delChan <- depl
 			},
 		},
@@ -100,7 +102,7 @@ func main() {
 	factory.Start(ctx.Done())
 	kafkaCfg := services.NewCfgMap("kubeExample", "kubeExample")
 	// CheckDeplLoop:
-	go handleDepChannels(addChan, updChan, delChan, kafkaCfg, errChan, ctx)
+	go handleDepChannels(addChan, updChan, delChan, &safeAppList, kafkaCfg, errChan, ctx)
 
 	go handleUpdateLoop(&safeAppList, ciliumClientSet, kafkaCfg, errChan, ctx)
 MainSelect:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	kafka "github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/google/uuid"
@@ -92,30 +93,29 @@ func (c *ConsumerWithChan[T]) Watch(e chan<- error) {
 
 ConsumerLoop:
 	for {
+		time.Sleep(2 * time.Second)
 		select {
 		case <-c.Ctx.Done():
 			fmt.Println("ctx.Done Exiting ProducerLoop")
 			break ConsumerLoop
 		default:
-			fmt.Println("here1")
 			event := c.Consumer.Poll(100)
-			fmt.Println("here2")
 			if m, ok := event.(*kafka.Message); ok {
 				fmt.Println("here3")
 				fmt.Printf("Message on %s:\n%s\n", m.TopicPartition, string(m.Value))
 				msg := *new(T)
-				err := json.Unmarshal(m.Value, msg)
+				fmt.Printf("\nmsg== %v\n\n", msg)
+				err := json.Unmarshal(m.Value, &msg)
 				if err != nil {
 					e <- fmt.Errorf("ConsumerWithChan.Watch ConsumerLoop %w", err)
+				} else {
+					fmt.Println("no err")
+					c.Channel <- msg
 				}
-				c.Channel <- msg
 			} else if err, ok := event.(kafka.Error); ok {
-				fmt.Println("here4")
-				fmt.Printf("Error: %v\n", err)
 				e <- fmt.Errorf("ConsumerWithChan.Watch ConsumerLoop %w", err)
 			}
 		}
-		fmt.Println("here5")
 	}
 }
 

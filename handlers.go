@@ -13,17 +13,17 @@ import (
 )
 
 var AddDplBaseMessage = map[string]services.Message{
-	"add": {
+	"Add": {
 		Action:        services.Add,
 		ActionSubject: services.Deployment,
 		Topic:         services.AppList,
 	},
-	"del": {
+	"Del": {
 		Action:        services.Del,
 		ActionSubject: services.Deployment,
 		Topic:         services.AppList,
 	},
-	"upd": {
+	"Upd": {
 		Action:        services.Upd,
 		ActionSubject: services.Deployment,
 		Topic:         services.AppList,
@@ -42,7 +42,7 @@ func sendAppMessage(name string, labels map[string]string, c chan services.Deplo
 	return fmt.Errorf("name=% msg=%s chan c is nil %v", name, a, c)
 }
 
-func handleDepChannels(addChan, updChan, delChan chan *appsv1.Deployment, kafkaCfg kafka.ConfigMap, errChan chan error, ctx context.Context) {
+func handleDepChannels(addChan, updChan, delChan chan *appsv1.Deployment, appList *SafeAppSlice, kafkaCfg kafka.ConfigMap, errChan chan error, ctx context.Context) {
 	defer ctx.Done()
 	kafkaProducer, err := services.NewProducerWithJsonChan[services.DeploymentMessage](kafkaCfg, services.AppList, ctx)
 	if err != nil {
@@ -55,22 +55,29 @@ CheckDeplLoop:
 	for {
 		select {
 		case dplAdd := <-addChan:
-			fmt.Printf("DEPLOYMENT ADDED: %s %s\n", dplAdd.Name, dplAdd.Labels)
+			fmt.Printf("DEPLOYMENT ADDED: %s %s\n", dplAdd.Name, dplAdd.Namespace)
 			err := sendAppMessage(dplAdd.Name, dplAdd.Labels, kafkaProducer.Channel, services.Add)
 			if err != nil {
 				errChan <- err
 			}
 		case dplDel := <-delChan:
-			fmt.Printf("DEPLOYMENT DELETED: %s %s\n", dplDel.Name, dplDel.Labels)
+			fmt.Printf("DEPLOYMENT DELETED: %s %s\n", dplDel.Name, dplDel.Namespace)
 			err := sendAppMessage(dplDel.Name, dplDel.Labels, kafkaProducer.Channel, services.Del)
 			if err != nil {
 				errChan <- err
 			}
 
 		case dplUpd := <-updChan:
-			err := sendAppMessage(dplUpd.Name, dplUpd.Labels, kafkaProducer.Channel, services.Del)
+			fmt.Printf("DEPLOYMENT UPDATED: %s %s\n", dplUpd.Name, dplUpd.Namespace)
+			needsUpdate, err := checkNeedsUpdate(AnApp{dplUpd.Name, dplUpd.Labels}, appList)
 			if err != nil {
 				errChan <- err
+			} else if needsUpdate {
+				fmt.Println("\n\n NEEDS UPDATE \n\n")
+				err = sendAppMessage(dplUpd.Name, dplUpd.Labels, kafkaProducer.Channel, services.Upd)
+				if err != nil {
+					errChan <- err
+				}
 			}
 		case e := <-errChan:
 			fmt.Printf("CheckDeplLoop err == %s\n", e)
@@ -158,6 +165,15 @@ func handleDel(a AnApp, appList *SafeAppSlice, clientset ciliumclientset.Interfa
 		}
 	}
 	return a.Name, a.Tags, nil
+}
+
+func checkNeedsUpdate(a AnApp, appList *SafeAppSlice) (bool, error) {
+	appList.mu.Lock()
+	defer appList.mu.Unlock()
+	if slices.ContainsFunc(appList.appList, a.DeepEqual) {
+		return false, nil
+	}
+	return true, nil
 }
 
 func handleUpd(a AnApp, appList *SafeAppSlice, clientset ciliumclientset.Interface, errChan chan error, ctx context.Context) (string, map[string]string, error) {
