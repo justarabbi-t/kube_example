@@ -180,17 +180,17 @@ func handleUpd(a AnApp, appList *SafeAppSlice, clientset ciliumclientset.Interfa
 	appList.mu.Lock()
 	defer appList.mu.Unlock()
 
-	if a.isExportBgpTenant() && slices.ContainsFunc(appList.appList, a.DeepEqual) {
-		appList.appList = slices.DeleteFunc(appList.appList, a.DeepEqual)
+	if a.isExportBgpTenant() && slices.ContainsFunc(appList.appList, a.Equal) {
+		appList.appList = slices.DeleteFunc(appList.appList, a.Equal)
 		appList.appList = append(appList.appList, a)
 		adv := NewCiliumBGPAdvert(a)
 		err := adv.applyManifest(clientset, ctx)
 		if err != nil {
 			return "", map[string]string{}, err
 		}
-	} else if !a.isExportBgpTenant() && slices.ContainsFunc(appList.appList, a.DeepEqual) {
+	} else if !a.isExportBgpTenant() && slices.ContainsFunc(appList.appList, a.Equal) {
 		// cover edge where depl is changed and now unexportable i so smart
-		appList.appList = slices.DeleteFunc(appList.appList, a.DeepEqual)
+		appList.appList = slices.DeleteFunc(appList.appList, a.Equal)
 		appList.appList = append(appList.appList, a)
 		adv := NewCiliumBGPAdvert(a)
 		err := adv.removeAdv(clientset, ctx)
