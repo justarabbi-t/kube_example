@@ -1,12 +1,9 @@
-package main
+package message_handler
 
 import (
 	"context"
 	"fmt"
-	"maps"
 	"slices"
-	"strings"
-	"sync"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	ciliumclientset "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
@@ -16,80 +13,18 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-type SafeAppSlice struct {
-	mu      sync.Mutex
-	appList []AnApp
+type CiliumBgpAdvert struct {
+	matchExpressions []matchExpression
+	advertTypes      []string
+	app              AnApp
+	manifest         *ciliumv2.CiliumBGPAdvertisement
+	// change advertTypes to iota enum eventually
 }
 
-func checkMap(k string, m map[string]string) bool {
-	_, ok := m[k]
-	return ok
+func (c1 CiliumBgpAdvert) Equal(c2 CiliumBgpAdvert) bool {
+	return slices.Equal(c1.advertTypes, c2.advertTypes) && slices.Equal(c1.matchExpressions, c2.matchExpressions)
 }
 
-type AnApp struct {
-	Name string
-	Tags map[string]string
-}
-
-func NewApp(name string, tags map[string]string) AnApp {
-	return AnApp{name, tags}
-}
-
-func (a1 AnApp) tagsEqual(a2 AnApp) bool {
-	return maps.Equal(a1.Tags, a2.Tags)
-}
-func (a1 AnApp) DeepEqual(a2 AnApp) bool {
-	return a1.Name == a2.Name && a1.getTenantName() == a2.getTenantName() && a1.tagsEqual(a2)
-}
-
-func (a1 AnApp) Equal(a2 AnApp) bool {
-	return a1.Name == a2.Name && a1.getTenantName() == a2.getTenantName()
-}
-
-func (a AnApp) getVrf() string {
-	if checkMap("vrf", a.Tags) {
-		return a.Tags["vrf"]
-	}
-	return ""
-}
-
-func (a AnApp) isExportBgpTenant() bool {
-	if checkMap("vrf", a.Tags) && checkMap("exportBgp", a.Tags) && checkMap("tenantName", a.Tags) {
-		return true
-	}
-	return false
-}
-
-func (a AnApp) getAdvertiseTypes() []string {
-	advertTypes := []string{}
-
-	if checkMap("advertTypes", a.Tags) {
-		advertTypes = append(advertTypes, strings.Split(a.Tags["advertTypes"], ".")...)
-	}
-	return advertTypes
-}
-
-func (a AnApp) getTenantName() string {
-	if checkMap("tenantName", a.Tags) {
-		return a.Tags["tenantName"]
-	}
-	return ""
-}
-
-type matchExpression struct {
-	key   string
-	value string
-}
-
-func (m1 matchExpression) Equal(m2 matchExpression) bool {
-	return m1.key == m2.key && m1.value == m2.value
-}
-
-func (m *matchExpression) asMap() map[string]string {
-	return map[string]string{
-		m.key: m.value,
-	}
-}
 func (c CiliumBgpAdvert) matchExpressionsAsMap() map[string]string {
 	labels := map[string]string{}
 	for _, m := range c.matchExpressions {
@@ -121,18 +56,6 @@ func (c *CiliumBgpAdvert) getLabelSelector() *v1.LabelSelector {
 	return &v1.LabelSelector{
 		MatchLabels: selectors,
 	}
-}
-
-type CiliumBgpAdvert struct {
-	matchExpressions []matchExpression
-	advertTypes      []string
-	app              AnApp
-	manifest         *ciliumv2.CiliumBGPAdvertisement
-	// change advertTypes to iota enum eventually
-}
-
-func (c1 CiliumBgpAdvert) Equal(c2 CiliumBgpAdvert) bool {
-	return slices.Equal(c1.advertTypes, c2.advertTypes) && slices.Equal(c1.matchExpressions, c2.matchExpressions)
 }
 
 func (c CiliumBgpAdvert) getBgpSvcAddrType() []ciliumv2.BGPServiceAddressType {

@@ -1,4 +1,4 @@
-package services
+package kafka_talkers
 
 import (
 	"encoding/json"

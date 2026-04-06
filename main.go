@@ -9,12 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
 
 	ciliumclientset "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
-	"github.com/justarabbi-t/kube_example.git/services"
+	kt "github.com/justarabbi-t/kube_example.git/kafka_talkers"
+	mh "github.com/justarabbi-t/kube_example.git/message_handler"
 	appsv1 "k8s.io/api/apps/v1"
 
 	"k8s.io/client-go/informers"
@@ -68,11 +68,7 @@ func main() {
 	// var wg sync.WaitGroup
 	// wg.Add(2)
 
-	safeAppList := SafeAppSlice{
-		mu:      sync.Mutex{},
-		appList: []AnApp{},
-	}
-
+	safeAppList := mh.NewSafeAppSlice()
 	errChan := make(chan error, 3)
 	addChan := make(chan *appsv1.Deployment, 3)
 	delChan := make(chan *appsv1.Deployment, 3)
@@ -100,11 +96,11 @@ func main() {
 	)
 
 	factory.Start(ctx.Done())
-	kafkaCfg := services.NewCfgMap("kubeExample", "kubeExample")
+	kafkaCfg := kt.NewCfgMap("kubeExample", "kubeExample")
 	// CheckDeplLoop:
-	go handleDepChannels(addChan, updChan, delChan, &safeAppList, kafkaCfg, errChan, ctx)
+	go mh.HandleDepChannels(addChan, updChan, delChan, safeAppList, kafkaCfg, errChan, ctx)
 
-	go handleUpdateLoop(&safeAppList, ciliumClientSet, kafkaCfg, errChan, ctx)
+	go mh.HandleUpdateLoop(safeAppList, ciliumClientSet, kafkaCfg, errChan, ctx)
 MainSelect:
 	for {
 		select {

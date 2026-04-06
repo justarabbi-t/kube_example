@@ -1,4 +1,4 @@
-package main
+package message_handler
 
 import (
 	"context"
@@ -8,31 +8,31 @@ import (
 	kafka "github.com/confluentinc/confluent-kafka-go/kafka"
 
 	ciliumclientset "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
-	"github.com/justarabbi-t/kube_example.git/services"
+	kt "github.com/justarabbi-t/kube_example.git/kafka_talkers"
 	appsv1 "k8s.io/api/apps/v1"
 )
 
-var AddDplBaseMessage = map[string]services.Message{
+var AddDplBaseMessage = map[string]kt.Message{
 	"Add": {
-		Action:        services.Add,
-		ActionSubject: services.Deployment,
-		Topic:         services.AppList,
+		Action:        kt.Add,
+		ActionSubject: kt.Deployment,
+		Topic:         kt.AppList,
 	},
 	"Del": {
-		Action:        services.Del,
-		ActionSubject: services.Deployment,
-		Topic:         services.AppList,
+		Action:        kt.Del,
+		ActionSubject: kt.Deployment,
+		Topic:         kt.AppList,
 	},
 	"Upd": {
-		Action:        services.Upd,
-		ActionSubject: services.Deployment,
-		Topic:         services.AppList,
+		Action:        kt.Upd,
+		ActionSubject: kt.Deployment,
+		Topic:         kt.AppList,
 	},
 }
 
-func sendAppMessage(name string, labels map[string]string, c chan services.DeploymentMessage, a services.Action) error {
+func sendAppMessage(name string, labels map[string]string, c chan kt.DeploymentMessage, a kt.Action) error {
 	if c != nil {
-		services.DeploymentMessage{
+		kt.DeploymentMessage{
 			Message: AddDplBaseMessage[a.String()],
 			Name:    name,
 			Labels:  labels,
@@ -42,9 +42,9 @@ func sendAppMessage(name string, labels map[string]string, c chan services.Deplo
 	return fmt.Errorf("name=% msg=%s chan c is nil %v", name, a, c)
 }
 
-func handleDepChannels(addChan, updChan, delChan chan *appsv1.Deployment, appList *SafeAppSlice, kafkaCfg kafka.ConfigMap, errChan chan error, ctx context.Context) {
+func HandleDepChannels(addChan, updChan, delChan chan *appsv1.Deployment, appList *SafeAppSlice, kafkaCfg kafka.ConfigMap, errChan chan error, ctx context.Context) {
 	defer ctx.Done()
-	kafkaProducer, err := services.NewProducerWithJsonChan[services.DeploymentMessage](kafkaCfg, services.AppList, ctx)
+	kafkaProducer, err := kt.NewProducerWithJsonChan[kt.DeploymentMessage](kafkaCfg, kt.AppList, ctx)
 	if err != nil {
 		errChan <- err
 		return
@@ -56,13 +56,13 @@ CheckDeplLoop:
 		select {
 		case dplAdd := <-addChan:
 			fmt.Printf("DEPLOYMENT ADDED: %s %s\n", dplAdd.Name, dplAdd.Namespace)
-			err := sendAppMessage(dplAdd.Name, dplAdd.Labels, kafkaProducer.Channel, services.Add)
+			err := sendAppMessage(dplAdd.Name, dplAdd.Labels, kafkaProducer.Channel, kt.Add)
 			if err != nil {
 				errChan <- err
 			}
 		case dplDel := <-delChan:
 			fmt.Printf("DEPLOYMENT DELETED: %s %s\n", dplDel.Name, dplDel.Namespace)
-			err := sendAppMessage(dplDel.Name, dplDel.Labels, kafkaProducer.Channel, services.Del)
+			err := sendAppMessage(dplDel.Name, dplDel.Labels, kafkaProducer.Channel, kt.Del)
 			if err != nil {
 				errChan <- err
 			}
@@ -74,7 +74,7 @@ CheckDeplLoop:
 				errChan <- err
 			} else if needsUpdate {
 				fmt.Println("\n\n NEEDS UPDATE \n\n")
-				err = sendAppMessage(dplUpd.Name, dplUpd.Labels, kafkaProducer.Channel, services.Upd)
+				err = sendAppMessage(dplUpd.Name, dplUpd.Labels, kafkaProducer.Channel, kt.Upd)
 				if err != nil {
 					errChan <- err
 				}
@@ -88,14 +88,14 @@ CheckDeplLoop:
 	}
 }
 
-func handleUpdateLoop(appList *SafeAppSlice, clientset ciliumclientset.Interface, kafkaCfg kafka.ConfigMap, errChan chan error, ctx context.Context) {
+func HandleUpdateLoop(appList *SafeAppSlice, clientset ciliumclientset.Interface, kafkaCfg kafka.ConfigMap, errChan chan error, ctx context.Context) {
 	defer ctx.Done()
-	kafkaConsumer, err := services.NewConsumerWithJsonChan[services.DeploymentMessage](kafkaCfg, services.AppList, ctx)
+	kafkaConsumer, err := kt.NewConsumerWithJsonChan[kt.DeploymentMessage](kafkaCfg, kt.AppList, ctx)
 	if err != nil {
 		errChan <- err
 		return
 	}
-	kafkaProducer, err := services.NewProducerWithJsonChan[services.DeploymentMessage](kafkaCfg, services.AdvList, ctx)
+	kafkaProducer, err := kt.NewProducerWithJsonChan[kt.DeploymentMessage](kafkaCfg, kt.AdvList, ctx)
 	if err != nil {
 		errChan <- err
 		return
@@ -112,7 +112,7 @@ UpdateListsLoop:
 			if err != nil {
 				errChan <- fmt.Errorf("case aMsg applyManifest %w", err)
 			}
-			sendAppMessage(name, tags, kafkaProducer.Channel, services.Add)
+			sendAppMessage(name, tags, kafkaProducer.Channel, kt.Add)
 		// case e := <-errChan:
 		// 	fmt.Printf("handleUpdateLoop UpdateListsLoop err == %s\n", e)
 		case <-ctx.Done():
@@ -122,15 +122,15 @@ UpdateListsLoop:
 	}
 }
 
-func handleAction(aMsg services.DeploymentMessage, appList *SafeAppSlice, clientset ciliumclientset.Interface, errChan chan error, ctx context.Context) (string, map[string]string, error) {
+func handleAction(aMsg kt.DeploymentMessage, appList *SafeAppSlice, clientset ciliumclientset.Interface, errChan chan error, ctx context.Context) (string, map[string]string, error) {
 
 	tmpApp := NewApp(aMsg.Name, aMsg.Labels)
 	switch aMsg.Action {
-	case services.Add:
+	case kt.Add:
 		return handleAdd(tmpApp, appList, clientset, errChan, ctx)
-	case services.Del:
+	case kt.Del:
 		return handleDel(tmpApp, appList, clientset, errChan, ctx)
-	case services.Upd:
+	case kt.Upd:
 		return handleUpd(tmpApp, appList, clientset, errChan, ctx)
 	default:
 		return "", map[string]string{}, fmt.Errorf("handleAction uknown action: stringRepr=%s intRepr=%d", aMsg.Action, aMsg.Action)
