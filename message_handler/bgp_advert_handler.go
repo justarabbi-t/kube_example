@@ -12,28 +12,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 )
 
-var AddDplBaseMessage = map[string]kt.Message{
-	"Add": {
-		Action:        kt.Add,
-		ActionSubject: kt.Deployment,
-		Topic:         kt.AppList,
-	},
-	"Del": {
-		Action:        kt.Del,
-		ActionSubject: kt.Deployment,
-		Topic:         kt.AppList,
-	},
-	"Upd": {
-		Action:        kt.Upd,
-		ActionSubject: kt.Deployment,
-		Topic:         kt.AppList,
-	},
-}
-
-func sendAppMessage(name string, labels map[string]string, c chan kt.DeploymentMessage, a kt.Action) error {
+func sendDplMessage(name string, labels map[string]string, c chan kt.DeploymentMessage, a kt.Action) error {
 	if c != nil {
 		kt.DeploymentMessage{
-			Message: AddDplBaseMessage[a.String()],
+			Message: kt.AddDplBaseMessage[a.String()],
 			Name:    name,
 			Labels:  labels,
 		}.Send(c)

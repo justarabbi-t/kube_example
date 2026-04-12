@@ -6,6 +6,24 @@ import (
 	"maps"
 )
 
+var AddDplBaseMessage = map[string]Message{
+	"Add": {
+		Action:        Add,
+		ActionSubject: Deployment,
+		Topic:         AppList,
+	},
+	"Del": {
+		Action:        Del,
+		ActionSubject: Deployment,
+		Topic:         AppList,
+	},
+	"Upd": {
+		Action:        Upd,
+		ActionSubject: Deployment,
+		Topic:         AppList,
+	},
+}
+
 type Action int
 
 const (
@@ -128,6 +146,18 @@ type DeploymentMessage struct {
 	Name    string            `json:"Name"`
 }
 
+type MessageLike interface {
+	DeploymentMessage
+}
+
+type Sender[T any] interface {
+	Send(c chan<- T)
+}
+
+func SendMessage[T MessageLike](c chan<- T, m Sender[T]) {
+	m.Send(c)
+}
+
 func (m DeploymentMessage) Send(c chan<- DeploymentMessage) {
 	fmt.Printf("\nSENDING MESSAGE: \n\t%v\n", m)
 	c <- m
@@ -138,4 +168,11 @@ func (m1 Message) Equal(m2 Message) bool {
 
 func (d1 DeploymentMessage) Equal(d2 DeploymentMessage) bool {
 	return d1.Name == d2.Name && maps.Equal(d1.Labels, d2.Labels) && d1.Message.Equal(d2.Message)
+}
+func NewDeploymentMessage(name string, labels map[string]string, action Action) DeploymentMessage {
+	return DeploymentMessage{
+		Message: AddDplBaseMessage[action.String()],
+		Name:    name,
+		Labels:  labels,
+	}
 }
