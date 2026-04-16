@@ -15,6 +15,7 @@ import (
 	ciliumclientset "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	kt "github.com/justarabbi-t/kube_example.git/kafka_talkers"
 	mh "github.com/justarabbi-t/kube_example.git/message_handler"
+	models "github.com/justarabbi-t/kube_example.git/models"
 	appsv1 "k8s.io/api/apps/v1"
 
 	"k8s.io/client-go/informers"
@@ -23,23 +24,14 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-type appConfig struct {
-	watchNameSpace string
-	kubeConfigPath string
-}
-
-func (c appConfig) String() string {
-	return fmt.Sprintf("watchNameSpace=%s kubeConfigPath=%s", c.watchNameSpace, c.kubeConfigPath)
-}
-
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	defer ctx.Done()
 
-	var cfg appConfig
-	flag.StringVar(&cfg.watchNameSpace, "watch", "default", "kube namespace to watch, defaut='default'")
-	flag.StringVar(&cfg.kubeConfigPath, "kube-path", ".kube/config", "kube config to use, default='./kube/config', assumes path resides in HOME dir")
+	var cfg models.KubeConfig
+	flag.StringVar(&cfg.WatchNameSpace, "watch", "default", "kube namespace to watch, defaut='default'")
+	flag.StringVar(&cfg.KubeConfigPath, "kube-path", ".kube/config", "kube config to use, default='./kube/config', assumes path resides in HOME dir")
 	flag.Parse()
 
 	logger := *slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -47,12 +39,12 @@ func main() {
 
 	logger.Info(fmt.Sprintf("start config=%s", cfg))
 
-	kubeconfig := filepath.Join(os.Getenv("HOME"), cfg.kubeConfigPath)
+	kubeconfig := filepath.Join(os.Getenv("HOME"), cfg.KubeConfigPath)
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		log.Fatalf("build config error: %w", err)
 	}
-	clientset, err := kubernetes.NewForConfig(config)
+	kubeClientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		log.Fatalf("build kube clientset error: %w", err)
 	}
@@ -62,7 +54,16 @@ func main() {
 		log.Fatalf("build cilium clientset error: %w", err)
 	}
 
-	factory := informers.NewSharedInformerFactoryWithOptions(clientset, 10*time.Minute, informers.WithNamespace(cfg.watchNameSpace))
+	kafkaCfg := kt.NewCfgMap("kubeExample", "kubeExample")
+	theApp := models.AppCfg{
+		KubeCfg:         cfg,
+		KafkaCfg:        kafkaCfg,
+		KubeClientset:   kubeClientset,
+		CiliumClientset: ciliumClientSet,
+		Ctx:             ctx,
+	}
+
+	factory := informers.NewSharedInformerFactoryWithOptions(theApp.KubeClientset, 10*time.Minute, informers.WithNamespace(theApp.KubeCfg.WatchNameSpace))
 
 	// setup initial struct chan
 	// var wg sync.WaitGroup
@@ -96,9 +97,9 @@ func main() {
 	)
 
 	factory.Start(ctx.Done())
-	kafkaCfg := kt.NewCfgMap("kubeExample", "kubeExample")
+
 	// CheckDeplLoop:
-	go mh.HandleDepChannels(addChan, updChan, delChan, safeAppList, kafkaCfg, errChan, ctx)
+	go mh.GenericHandleDepChannels(addChan, updChan, delChan, safeAppList, kafkaCfg, errChan, ctx)
 
 	go mh.HandleUpdateLoop(safeAppList, ciliumClientSet, kafkaCfg, errChan, ctx)
 MainSelect:

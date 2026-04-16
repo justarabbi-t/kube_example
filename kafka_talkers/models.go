@@ -24,6 +24,31 @@ var AddDplBaseMessage = map[string]Message{
 	},
 }
 
+type MessageType int
+
+const (
+	DeployMsg MessageType = iota
+)
+
+var msgTypeMap = map[MessageType]MessageLike{
+	DeployMsg: NewEmptyDeploymentMessage(),
+}
+
+var msgTypeStructMap = map[MessageLike]MessageType{
+	&DeploymentMessage{}: DeployMsg,
+}
+
+var msgTypeStringMap = map[MessageType]string{
+	DeployMsg: "DeploymentMessage",
+}
+
+func (m MessageType) String() string {
+	return msgTypeStringMap[m]
+}
+func (m MessageType) GetEmptyStruct() MessageLike {
+	return msgTypeMap[m]
+}
+
 type Action int
 
 const (
@@ -147,18 +172,88 @@ type DeploymentMessage struct {
 }
 
 type MessageLike interface {
-	DeploymentMessage
+	GetAction() Action
+	GetActionSubject() ActionSubject
+	GetTopic() Topic
+	GetLabels() map[string]string
+	GetName() string
+	GetMsgType() MessageType
+	SetAction(Action)
+	SetActionSubject(ActionSubject)
+	SetTopic(Topic)
+	SetLabels(map[string]string)
+	SetName(string)
 }
 
-type Sender[T any] interface {
-	Send(c chan<- T)
+type Sender interface {
+	SendMsg(c chan<- any)
+	UpdateMsg(n string, l map[string]string, a Action)
+}
+type MessageHandler interface {
+	MessageLike
+	Sender
+	MessageLoop()
 }
 
-func SendMessage[T MessageLike](c chan<- T, m Sender[T]) {
-	m.Send(c)
+func (m DeploymentMessage) GetMsgType() MessageType {
+	return msgTypeStructMap[&m]
 }
 
-func (m DeploymentMessage) Send(c chan<- DeploymentMessage) {
+func (m DeploymentMessage) GetLabels() map[string]string {
+	return m.Labels
+}
+func (m *DeploymentMessage) SetLabels(l map[string]string) {
+	m.Labels = l
+}
+
+func (m DeploymentMessage) GetName() string {
+	return m.Name
+}
+func (m *DeploymentMessage) SetName(n string) {
+	m.Name = n
+}
+
+func (m DeploymentMessage) GetTopic() Topic {
+	return m.Topic
+}
+func (m *DeploymentMessage) SetTopic(t Topic) {
+	m.Topic = t
+}
+
+func (m DeploymentMessage) GetActionSubject() ActionSubject {
+	return m.ActionSubject
+}
+func (m *DeploymentMessage) SetActionSubject(a ActionSubject) {
+	m.ActionSubject = a
+}
+
+func (m DeploymentMessage) GetAction() Action {
+	return m.Action
+}
+func (m *DeploymentMessage) SetAction(a Action) {
+	m.Action = a
+}
+
+func (m *DeploymentMessage) MessageLoop() {
+	// for later
+
+}
+
+//	func SendMessage[T any](c chan<- T, m Sender) {
+//		m.Send(any(c))
+//	}
+func (m *DeploymentMessage) UpdateMsg(n string, l map[string]string, a Action) {
+	m.Name = n
+	m.Labels = l
+	m.Action = a
+}
+
+func (m DeploymentMessage) SendMsg(c chan<- any) {
+	fmt.Printf("\nSENDING MESSAGE: \n\t%v\n", m)
+	c <- m
+}
+
+func (m DeploymentMessage) Send(c chan<- any) {
 	fmt.Printf("\nSENDING MESSAGE: \n\t%v\n", m)
 	c <- m
 }
@@ -175,4 +270,7 @@ func NewDeploymentMessage(name string, labels map[string]string, action Action) 
 		Name:    name,
 		Labels:  labels,
 	}
+}
+func NewEmptyDeploymentMessage() *DeploymentMessage {
+	return &DeploymentMessage{}
 }

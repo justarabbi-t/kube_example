@@ -53,13 +53,13 @@ func NewCfgMap(clientId, groupId string) kafka.ConfigMap {
 	return cfg
 }
 
-func NewProducerWithJsonChan[T any](kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) (*ProducerWithChan[T], error) {
-	c := make(chan T, 3)
+func NewProducerWithJsonChan(kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) (*ProducerWithChan[any], error) {
+	c := make(chan any, 3)
 	producer, err := kafka.NewProducer(&kafkaCfg)
 	if err != nil {
 		return nil, fmt.Errorf("NewProducerWithJsonChan %w", err)
 	}
-	return &ProducerWithChan[T]{
+	return &ProducerWithChan[any]{
 		Channel:  c,
 		Producer: producer,
 		Ctx:      ctx,
@@ -74,13 +74,13 @@ type ConsumerWithChan[T any] struct {
 	Topic    Topic
 }
 
-func NewConsumerWithJsonChan[T any](kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) (*ConsumerWithChan[T], error) {
-	c := make(chan T, 3)
+func NewConsumerWithJsonChan(kafkaCfg kafka.ConfigMap, topic Topic, ctx context.Context) (*ConsumerWithChan[any], error) {
+	c := make(chan any, 3)
 	Consumer, err := kafka.NewConsumer(&kafkaCfg)
 	if err != nil {
 		return nil, fmt.Errorf("NewConsumerWithJsonChan %w", err)
 	}
-	return &ConsumerWithChan[T]{
+	return &ConsumerWithChan[any]{
 		Channel:  c,
 		Consumer: Consumer,
 		Ctx:      ctx,
@@ -119,7 +119,7 @@ ConsumerLoop:
 	}
 }
 
-func (p *ProducerWithChan[T]) Watch(e chan<- error) {
+func (p *ProducerWithChan[any]) Watch(e chan<- error) {
 	defer p.Producer.Close()
 ProducerLoop:
 	for {

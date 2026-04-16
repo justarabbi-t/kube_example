@@ -11,6 +11,21 @@ type SafeAppSlice struct {
 	appList []AnApp
 }
 
+type HandlerChannels[T any] struct {
+	errChan      chan error
+	addChan      chan T
+	updChan      chan T
+	delChan      chan T
+	producerChan chan any
+	consumerChan chan any
+}
+
+type KubeLike interface {
+	GetName() string
+	GetNamespace() string
+	GetLabels() map[string]string
+}
+
 func NewSafeAppSlice() *SafeAppSlice {
 	return &SafeAppSlice{
 		mu:      sync.Mutex{},
