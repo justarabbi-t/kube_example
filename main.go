@@ -13,7 +13,6 @@ import (
 	"time"
 
 	ciliumclientset "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
-	kt "github.com/justarabbi-t/kube_example.git/kafka_talkers"
 	mh "github.com/justarabbi-t/kube_example.git/message_handler"
 	models "github.com/justarabbi-t/kube_example.git/models"
 	appsv1 "k8s.io/api/apps/v1"
@@ -54,7 +53,7 @@ func main() {
 		log.Fatalf("build cilium clientset error: %w", err)
 	}
 
-	kafkaCfg := kt.NewCfgMap("kubeExample", "kubeExample")
+	kafkaCfg := mh.NewCfgMap("kubeExample", "kubeExample")
 	theApp := models.AppCfg{
 		KubeCfg:         cfg,
 		KafkaCfg:        kafkaCfg,

@@ -1,4 +1,4 @@
-package kafka_talkers
+package message_handler
 
 import (
 	"context"
